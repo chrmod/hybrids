@@ -59,20 +59,18 @@ describe("cache:", () => {
       });
 
       get(target, "key", () => target.otherKey);
-      invalidate(target, "otherKey");
-
       get(target, "key", spy);
 
       expect(spy).not.toHaveBeenCalled();
     });
 
-    it("runs getter again if force option is true", () => {
+    it("runs getter again if invalidates dependency", () => {
       Object.defineProperty(target, "otherKey", {
         get: () => get(target, "otherKey", () => "value"),
       });
 
       get(target, "key", () => target.otherKey);
-      invalidate(target, "otherKey", { force: true });
+      invalidate(target, "otherKey");
 
       get(target, "key", spy);
 
@@ -128,7 +126,6 @@ describe("cache:", () => {
       expect(getEntries(host)).toEqual([
         jasmine.objectContaining({
           value: "value",
-          key: "key",
         }),
       ]);
     });
@@ -179,7 +176,6 @@ describe("cache:", () => {
       expect(getEntries(target)).toEqual([
         jasmine.objectContaining({
           value: undefined,
-          key: "key",
         }),
       ]);
     });

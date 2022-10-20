@@ -1,7 +1,8 @@
 import global from "./global.js";
-import * as emitter from "./emitter.js";
 
 const entries = new WeakMap();
+const fns = new Set();
+
 export function getEntry(target, key) {
   let targetMap = entries.get(target);
   if (!targetMap) {
@@ -19,9 +20,8 @@ export function getEntry(target, key) {
       lastValue: undefined,
       contexts: new Set(),
       deps: new Set(),
-      state: 0,
-      depState: 0,
       resolved: false,
+      observe: undefined,
     };
     targetMap.set(key, entry);
   }
@@ -35,13 +35,42 @@ export function getEntries(target) {
   return [];
 }
 
-function dispatchDeep(entry) {
-  entry.resolved = false;
+function queue(fn) {
+  if (!fns.size) {
+    global.requestAnimationFrame(function execute() {
+      const errors = [];
 
-  emitter.dispatch(entry);
+      for (const fn of fns) {
+        try {
+          fn();
+        } catch (e) {
+          errors.push(e);
+        }
+      }
 
-  for (const context of entry.contexts) {
-    dispatchDeep(context);
+      fns.clear();
+
+      if (errors.length > 1) throw errors;
+      if (errors.length) throw errors[0];
+    });
+  }
+
+  fns.add(fn);
+}
+
+function dispatch(entry) {
+  const contexts = new Set();
+  const iterator = contexts.values();
+
+  while (entry) {
+    entry.resolved = false;
+    if (entry.observe) queue(entry.observe);
+
+    for (const context of entry.contexts) {
+      contexts.add(context);
+    }
+
+    entry = iterator.next().value;
   }
 }
 
@@ -57,26 +86,6 @@ export function get(target, key, getter) {
 
   if (entry.resolved) return entry.value;
 
-  if (entry.depState > entry.state) {
-    let depState = entry.state;
-
-    for (const depEntry of entry.deps) {
-      depEntry.target[depEntry.key];
-
-      if (!depEntry.resolved) {
-        depState = false;
-        break;
-      }
-
-      depState += depEntry.state;
-    }
-
-    if (depState && depState === entry.depState) {
-      entry.resolved = true;
-      return entry.value;
-    }
-  }
-
   const lastContext = context;
 
   try {
@@ -84,37 +93,23 @@ export function get(target, key, getter) {
       throw Error(`Circular get invocation is forbidden: '${key}'`);
     }
 
-    for (const depEntry of entry.deps) {
-      depEntry.contexts.delete(entry);
-    }
-
-    entry.deps.clear();
     context = entry;
     contexts.add(entry);
 
-    const nextValue = getter(target, entry.value);
+    for (const depEntry of entry.deps) {
+      depEntry.contexts.delete(entry);
+    }
+    entry.deps.clear();
+
+    entry.value = getter(target, entry.value);
+    entry.resolved = true;
 
     context = lastContext;
-
-    if (nextValue !== entry.value) {
-      entry.value = nextValue;
-      entry.state += 1;
-    }
-
-    let depState = entry.state;
-    for (const depEntry of entry.deps) {
-      depState += depEntry.state;
-    }
-
-    entry.depState = depState;
-    entry.resolved = true;
 
     contexts.delete(entry);
   } catch (e) {
     context = lastContext;
     contexts.delete(entry);
-
-    entry.resolved = false;
 
     if (context) {
       context.deps.delete(entry);
@@ -133,18 +128,15 @@ export function set(target, key, setter, value) {
 
   if (newValue !== entry.value) {
     entry.value = newValue;
-    entry.state += 1;
-    entry.depState = 0;
-
-    dispatchDeep(entry);
+    dispatch(entry);
   }
 }
 
-const gcList = new Set();
+const gc = new Set();
 function deleteEntry(entry) {
-  if (!gcList.size) {
+  if (!gc.size) {
     global.requestAnimationFrame(() => {
-      for (const e of gcList) {
+      for (const e of gc) {
         if (e.contexts.size === 0) {
           for (const depEntry of e.deps) {
             depEntry.contexts.delete(e);
@@ -155,16 +147,15 @@ function deleteEntry(entry) {
         }
       }
 
-      gcList.clear();
+      gc.clear();
     });
   }
 
-  gcList.add(entry);
+  gc.add(entry);
 }
 
 function invalidateEntry(entry, options) {
-  entry.depState = 0;
-  dispatchDeep(entry);
+  dispatch(entry);
 
   if (options.clearValue) {
     entry.value = undefined;
@@ -173,10 +164,6 @@ function invalidateEntry(entry, options) {
 
   if (options.deleteEntry) {
     deleteEntry(entry);
-  }
-
-  if (options.force) {
-    entry.state += 1;
   }
 }
 
@@ -209,12 +196,19 @@ export function invalidateAll(target, options = {}) {
 export function observe(target, key, getter, fn) {
   const entry = getEntry(target, key);
 
-  return emitter.subscribe(entry, () => {
+  entry.observe = () => {
     const value = get(target, key, getter);
 
     if (value !== entry.lastValue) {
       fn(target, value, entry.lastValue);
       entry.lastValue = value;
     }
-  });
+  };
+
+  queue(entry.observe);
+
+  return () => {
+    fns.delete(entry.observe);
+    entry.observe = undefined;
+  };
 }

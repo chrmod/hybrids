@@ -3,7 +3,6 @@ import * as cache from "./cache.js";
 import { deferred, camelToDash, walkInShadow } from "./utils.js";
 
 const disconnects = new WeakMap();
-
 class HybridsRootElement extends global.HTMLElement {
   constructor() {
     super();
@@ -15,24 +14,33 @@ class HybridsRootElement extends global.HTMLElement {
     }
   }
 
-  connectedCallback() {
+  async connectedCallback() {
     const { connects } = this.constructor;
 
-    if (connects.size) {
-      const set = new Set();
+    if (connects.size && !disconnects.get(this)) {
+      disconnects.set(this, new Set());
+
+      await deferred;
+
+      const set = disconnects.get(this);
+
       for (const fn of connects) {
         const cb = fn(this);
-        if (cb) set.add(cb);
+        if (cb) {
+          if (set) {
+            set.add(cb);
+          } else {
+            cb();
+          }
+        }
       }
-
-      disconnects.set(this, set);
     }
   }
 
-  disconnectedCallback() {
-    const set = disconnects.get(this);
-    if (set) {
-      for (const cb of set) cb();
+  async disconnectedCallback() {
+    if (disconnects.get(this)) {
+      await deferred;
+      for (const cb of disconnects.get(this)) cb();
       disconnects.delete(this);
     }
   }
@@ -159,6 +167,12 @@ function compile(hybrids, HybridsElement) {
     } else if (type !== "object" || desc === null) {
       desc = { value: desc };
     } else if (desc.set) {
+      if (hasOwnProperty.call(desc, "value")) {
+        throw TypeError(
+          `Invalid property descriptor for '${key}' property - it must not have 'value' and 'set' properties at the same time.`,
+        );
+      }
+
       const attrName = camelToDash(key);
       const get = desc.get || ((host, value) => value);
       desc.get = (host, value) => {
@@ -192,12 +206,9 @@ function compile(hybrids, HybridsElement) {
 
     if (desc.connect) {
       connects.add((host) => {
-        function invalidate(options) {
-          cache.invalidate(host, key, {
-            force: typeof options === "object" && options.force === true,
-          });
-        }
-        return desc.connect(host, key, invalidate);
+        return desc.connect(host, key, () => {
+          cache.invalidate(host, key);
+        });
       });
     }
 

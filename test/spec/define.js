@@ -51,6 +51,18 @@ describe("define:", () => {
     }).toThrow();
   });
 
+  it("throws when set and value property is set at the same time", () => {
+    expect(() => {
+      define({
+        tag: "test-define-throws",
+        prop: {
+          value: "value",
+          set: () => {},
+        },
+      });
+    }).toThrow();
+  });
+
   it("returns passed hybrids if the tag name is defined", () => {
     const hybrids = { tag: "test-define-twice" };
     expect(define(hybrids)).toBe(hybrids);
@@ -136,18 +148,20 @@ describe("define:", () => {
     el = document.createElement("test-define-invalidate-value");
     document.body.appendChild(el);
 
-    expect(el.prop).toBe(0);
-    expect(el.otherProp).toBe(0);
-    expect(el.otherProp).toBe(0);
-    expect(spy).toHaveBeenCalledTimes(1);
+    return Promise.resolve().then(() => {
+      expect(el.prop).toBe(0);
+      expect(el.otherProp).toBe(0);
+      expect(el.otherProp).toBe(0);
+      expect(spy).toHaveBeenCalledTimes(1);
 
-    ref();
-    expect(el.otherProp).toBe(0);
-    expect(spy).toHaveBeenCalledTimes(1);
+      ref();
+      expect(el.otherProp).toBe(0);
+      expect(spy).toHaveBeenCalledTimes(2);
 
-    ref({ force: true });
-    expect(el.otherProp).toBe(0);
-    expect(spy).toHaveBeenCalledTimes(2);
+      ref({ force: true });
+      expect(el.otherProp).toBe(0);
+      expect(spy).toHaveBeenCalledTimes(3);
+    });
   });
 
   describe("created element", () => {
@@ -270,20 +284,27 @@ describe("define:", () => {
       });
     });
 
-    it("calls custom connect method", () => {
+    it("calls custom connect method once", () => {
       spy = jasmine.createSpy("define");
       el = document.createElement("test-define-default");
 
       expect(spy).toHaveBeenCalledTimes(0);
       document.body.appendChild(el);
-      expect(spy).toHaveBeenCalledTimes(1);
 
-      return resolveRaf(() => {
+      const fragment = document.createDocumentFragment();
+      fragment.appendChild(el);
+      document.body.appendChild(el);
+
+      return Promise.resolve().then(() => {
         expect(spy).toHaveBeenCalledTimes(1);
-        el.prop3 = true;
+
         return resolveRaf(() => {
           expect(spy).toHaveBeenCalledTimes(1);
-          expect(el.getAttribute("prop3")).toBe("");
+          el.prop3 = true;
+          return resolveRaf(() => {
+            expect(spy).toHaveBeenCalledTimes(1);
+            expect(el.getAttribute("prop3")).toBe("");
+          });
         });
       });
     });

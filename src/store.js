@@ -988,7 +988,6 @@ function get(Model, id) {
 
   if (entry.value && !validate(entry.value)) {
     entry.resolved = false;
-    entry.depState = 0;
   }
 
   return cache.get(config, stringId, (h, cachedModel) => {
